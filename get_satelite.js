@@ -23,6 +23,15 @@ function maskS2(image) {
   return image.updateMask(mask).divide(10000).copyProperties(image, ["system:time_start"]);
 }
 
+var BANDS = ["B2", "B3", "B4", "B8", "B11"];
+
+// Повністю замаскований «порожній» знімок: гарантує, що median() матиме потрібні канали,
+// навіть якщо за вікно немає жодної придатної сцени (тоді результат = NoData, а не помилка експорту).
+var EMPTY = ee.Image.constant(BANDS.map(function () { return 0; }))
+  .rename(BANDS)
+  .toFloat()
+  .updateMask(0);
+
 function composite(start, end) {
   return ee
     .ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
@@ -30,6 +39,8 @@ function composite(start, end) {
     .filterDate(start, end)
     .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 40))
     .map(maskS2)
+    .select(BANDS)
+    .merge(ee.ImageCollection([EMPTY]))
     .median()
     .clip(aoi);
 }
@@ -77,5 +88,6 @@ years.forEach(function (y) {
     crs: CRS,
     crsTransform: TRANSFORM,
     maxPixels: 1e13,
+    formatOptions: { noData: -9999 },
   });
 });

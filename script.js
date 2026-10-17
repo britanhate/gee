@@ -1,5 +1,10 @@
 /**
- * v6 запобігання зависанню (Concurrency & Memory Fix).
+ * Класифікація земного покриву 2021–2025 (RF на Sentinel-1/2), площі та переходи класів,
+ * SAR-картування води після прориву Каховської дамби, dNBR/FIRMS по берегах,
+ * точки для незалежної валідації за Olofsson.
+ *
+ * Усі площі, переходи та експорти рахуються на одній сітці (CRS + TRANSFORM),
+ * тій самій, що в get_satelite.js. NoData у класифікаційних растрах = 255.
  */
 
 // ---------------------------------------------------------------
@@ -9,8 +14,14 @@
 var aoi = ee.Geometry.Rectangle([33.25, 46.7, 33.49, 46.88]);
 Map.centerObject(aoi, 10);
 
+// Єдина сітка для експортів і підрахунку площ (EPSG:4326, ~10 м). Має збігатися з get_satelite.js.
+var CRS = "EPSG:4326";
+var TRANSFORM = [8.983152841195215e-5, 0, 33.24997243181473, 0, -8.983152841195215e-5, 46.880110237760235];
+var GRID = ee.Projection(CRS, TRANSFORM);
+var NODATA_CLASS = 255;
+
 var pointsPerClass = 500;
-var numberOfTrees = 100; // Зменшено з 150 до 100 для прискорення навчання без втрати точності
+var numberOfTrees = 100;
 var s1OrbitPass = "ASCENDING";
 
 var classNames = [
@@ -42,7 +53,7 @@ var years = [2021, 2022, 2023, 2024, 2025];
 // Параметри SAR-картування прориву дамби
 var BEFORE_WINDOW = ["2023-05-20", "2023-06-06"];
 var AFTER_WINDOW = ["2023-06-06", "2023-06-26"];
-var HAND_MAX = 15;''
+var HAND_MAX = 15;
 var SLOPE_MAX = 5;
 var DIFF_THR = -3;
 var MIN_PX = 20;
@@ -177,8 +188,9 @@ function buildTraining2021(features) {
     .median()
     .clip(aoi);
 
+  // Некартовані класи WorldCover лишаються 255 і не потрапляють у навчання
   var wcClass = ee
-    .Image(0)
+    .Image(NODATA_CLASS)
     .where(worldCover.eq(80), 0)
     .where(worldCover.eq(40), 1)
     .where(worldCover.eq(30), 2)
@@ -205,8 +217,9 @@ function buildTrainingDW(year, features) {
 
   var dwLabelMode = dw.select("label").mode().clip(aoi);
 
+  // Некартовані класи DW (flooded_vegetation, snow_and_ice) лишаються 255
   var dwClass = ee
-    .Image(0)
+    .Image(NODATA_CLASS)
     .where(dwLabelMode.eq(0), 0)
     .where(dwLabelMode.eq(4), 1)
     .where(dwLabelMode.eq(2), 2)
@@ -236,11 +249,19 @@ function buildReliableTraining(baseClass, dwProb, features) {
   var builtMask = baseClass.eq(5).and(builtProbability.gte(builtThreshold));
   var wetlandMask = wetlandProbability.gte(wetlandThreshold).and(features.select("NDVI_summer").gt(0.25));
 
+  // Беремо лише однозначні пікселі: рівно одна маска. Пікселі, що підходять під кілька класів
+  // (найчастіше Grassland і Wetland через спільну flooded_vegetation), не йдуть у навчання.
+  var maskCount = waterMask
+    .add(agricultureMask)
+    .add(grasslandMask)
+    .add(shrubTreeMask)
+    .add(bareMask)
+    .add(builtMask)
+    .add(wetlandMask);
+
   var reliableTraining = ee
     .Image(0)
-    .updateMask(
-      waterMask.or(agricultureMask).or(grasslandMask).or(shrubTreeMask).or(bareMask).or(builtMask).or(wetlandMask),
-    )
+    .updateMask(maskCount.eq(1))
     .where(waterMask, 0)
     .where(agricultureMask, 1)
     .where(grasslandMask, 2)
@@ -272,6 +293,48 @@ function buildReliableTraining(baseClass, dwProb, features) {
 // ---------------------------------------------------------------
 // 4. КЛАСИФІКАЦІЯ ПО РОКАХ ТА ЗБІР ДАНИХ ПЛОЩ
 // ---------------------------------------------------------------
+
+var CLASS_VALUES = [0, 1, 2, 3, 4, 5, 6];
+
+// Площа (км²) кожного класу в межах geometry за один прохід, на сітці GRID.
+// Повертає 7 Feature (включно з класами нульової площі) з додатковими властивостями props.
+function areaByClass(classified, geometry, props) {
+  var grouped = ee.Image.pixelArea()
+    .addBands(classified.rename("cls"))
+    .reduceRegion({
+      reducer: ee.Reducer.sum().group({ groupField: 1, groupName: "cls" }),
+      geometry: geometry,
+      crs: CRS,
+      crsTransform: TRANSFORM,
+      maxPixels: 1e13,
+    });
+  var groups = ee.FeatureCollection(
+    ee.List(grouped.get("groups")).map(function (g) {
+      return ee.Feature(null, g);
+    }),
+  );
+  return ee.FeatureCollection(
+    CLASS_VALUES.map(function (c) {
+      var area = ee.Number(groups.filter(ee.Filter.eq("cls", c)).aggregate_sum("sum"));
+      return ee.Feature(null, props).set({ class: c, area_km2: area.divide(1e6) });
+    }),
+  );
+}
+
+// Сума площі (км²) пікселів mask у межах geometry на сітці GRID.
+function maskedAreaKm2(mask, geometry) {
+  var area = ee.Image.pixelArea()
+    .updateMask(mask)
+    .reduceRegion({
+      reducer: ee.Reducer.sum(),
+      geometry: geometry,
+      crs: CRS,
+      crsTransform: TRANSFORM,
+      maxPixels: 1e13,
+    })
+    .get("area");
+  return ee.Number(ee.Algorithms.If(area, area, 0)).divide(1e6);
+}
 
 var classifiedByYear = {};
 var featuresByYear = {};
@@ -313,31 +376,17 @@ years.forEach(function (year) {
 
   Map.addLayer(classified, classificationVis, "Classification " + year, year === 2021);
 
-  var pixelArea = ee.Image.pixelArea();
-  var areaByClass = ee.List.sequence(0, 6).map(function (classValue) {
-    var mask = classified.eq(ee.Image.constant(classValue));
-    var area = pixelArea
-      .updateMask(mask)
-      .reduceRegion({
-        reducer: ee.Reducer.sum(),
-        geometry: aoi,
-        scale: 20,
-        maxPixels: 1e13, // Збільшено scale до 20m для швидкості
-      })
-      .get("area");
-    var areaNumber = ee.Number(ee.Algorithms.If(area, area, 0));
-    return ee.Dictionary({ year: year, class: classValue, area_km2: areaNumber.divide(1000000) });
-  });
-
-  allAreaRows.push(areaByClass);
+  allAreaRows.push(areaByClass(classified, aoi, { year: year }));
 
   Export.image.toDrive({
-    image: classified,
+    image: classified.unmask(NODATA_CLASS).toByte(),
     description: "classified_" + year,
     folder: "Master_Rasters",
     region: aoi,
-    scale: 10,
+    crs: CRS,
+    crsTransform: TRANSFORM,
     maxPixels: 1e13,
+    formatOptions: { noData: NODATA_CLASS },
   });
 });
 
@@ -350,14 +399,7 @@ Export.table.toDrive({
 });
 
 Export.table.toDrive({
-  collection: ee.FeatureCollection(
-    ee
-      .List(allAreaRows)
-      .flatten()
-      .map(function (d) {
-        return ee.Feature(null, ee.Dictionary(d));
-      }),
-  ),
+  collection: ee.FeatureCollection(allAreaRows).flatten(),
   description: "all_area_by_class_2021_2025",
   folder: "Master_Tables",
   fileFormat: "CSV",
@@ -374,8 +416,9 @@ function transitionTable(fromImg, toImg) {
   var grouped = pixelArea.addBands(code).reduceRegion({
     reducer: ee.Reducer.sum().group({ groupField: 1, groupName: "code" }),
     geometry: aoi,
-    scale: 20,
-    maxPixels: 1e13, // scale: 20m підходить для підрахунку площ transition matrix
+    crs: CRS,
+    crsTransform: TRANSFORM,
+    maxPixels: 1e13,
   });
 
   var groups = ee.List(grouped.get("groups"));
@@ -511,7 +554,8 @@ Export.image.toDrive({
   description: "sar_flood_hand_2023",
   folder: "Master_Rasters",
   region: aoi,
-  scale: 10,
+  crs: CRS,
+  crsTransform: TRANSFORM,
   maxPixels: 1e13,
 });
 
@@ -521,34 +565,10 @@ Export.image.toDrive({
 
 var banks = { left: leftBank, right: rightBank };
 
-function areaByClassInBank(classified, geometry, year, bankName) {
-  var pixelArea = ee.Image.pixelArea();
-  var rows = ee.List.sequence(0, 6).map(function (classValue) {
-    var mask = classified.eq(ee.Image.constant(classValue));
-    var area = pixelArea
-      .updateMask(mask)
-      .reduceRegion({
-        reducer: ee.Reducer.sum(),
-        geometry: geometry,
-        scale: 20,
-        maxPixels: 1e13,
-      })
-      .get("area");
-    var areaNumber = ee.Number(ee.Algorithms.If(area, area, 0));
-    return ee.Feature(null, {
-      year: year,
-      bank: bankName,
-      class: classValue,
-      area_km2: areaNumber.divide(1e6),
-    });
-  });
-  return ee.FeatureCollection(rows);
-}
-
 var bankTables = [];
 years.forEach(function (year) {
   Object.keys(banks).forEach(function (bankName) {
-    bankTables.push(areaByClassInBank(classifiedByYear[year], banks[bankName], year, bankName));
+    bankTables.push(areaByClass(classifiedByYear[year], banks[bankName], { year: year, bank: bankName }));
   });
 });
 
@@ -560,14 +580,12 @@ Export.table.toDrive({
 });
 
 var DNBR_THRESHOLD = 0.27;
-var VEGETATED_CLASSES = [1, 2, 3];
+// Agriculture (1) виключено: річний dNBR на ріллі реагує на сівозміну та строки збирання, а не на пожежі.
+var VEGETATED_CLASSES = [2, 3];
 
 function vegetatedInBothYears(year1, year2) {
   function isVegetated(classified) {
-    return classified
-      .eq(VEGETATED_CLASSES[0])
-      .or(classified.eq(VEGETATED_CLASSES[1]))
-      .or(classified.eq(VEGETATED_CLASSES[2]));
+    return classified.remap(VEGETATED_CLASSES, VEGETATED_CLASSES.map(function () { return 1; }), 0);
   }
   return isVegetated(classifiedByYear[year1]).and(isVegetated(classifiedByYear[year2]));
 }
@@ -591,22 +609,12 @@ burnPairs.forEach(function (pair) {
   var burnMask = dnbr.gt(DNBR_THRESHOLD).and(vegMask);
 
   Object.keys(banks).forEach(function (bankName) {
-    var area = ee.Image.pixelArea()
-      .updateMask(burnMask)
-      .reduceRegion({
-        reducer: ee.Reducer.sum(),
-        geometry: banks[bankName],
-        scale: 20,
-        maxPixels: 1e13,
-      })
-      .get("area");
-    var areaNumber = ee.Number(ee.Algorithms.If(area, area, 0)).divide(1e6);
     burnRows.push(
       ee.Feature(null, {
         from_year: pair[0],
         to_year: pair[1],
         bank: bankName,
-        burn_area_km2: areaNumber,
+        burn_area_km2: maskedAreaKm2(burnMask, banks[bankName]),
       }),
     );
   });
@@ -614,7 +622,7 @@ burnPairs.forEach(function (pair) {
 
 Export.table.toDrive({
   collection: ee.FeatureCollection(burnRows),
-  description: "dnbr_burn_area_by_bank_v3",
+  description: "dnbr_burn_area_by_bank_v4",
   folder: "Master_Tables",
   fileFormat: "CSV",
 });
@@ -653,51 +661,64 @@ Export.table.toDrive({
 var validationYears = [2021, 2025];
 var PER_CLASS = 75;
 
-var allBlindPts = [];
-var allKeyPts = [];
+var allPts = [];
 
 validationYears.forEach(function (yr) {
-  var mapForValidation = classifiedByYear[yr];
+  var sampled = classifiedByYear[yr].stratifiedSample({
+    numPoints: PER_CLASS,
+    classBand: "classification",
+    region: aoi,
+    projection: GRID,
+    seed: 42 + yr,
+    geometries: true,
+    dropNulls: true,
+  });
 
-  var pts = mapForValidation
-    .stratifiedSample({
-      numPoints: PER_CLASS,
-      classBand: "classification",
-      region: aoi,
-      scale: 10,
-      seed: 42 + yr,
-      geometries: true,
-      dropNulls: true,
-    })
-    .map(function (f) {
+  // stratifiedSample повертає точки, впорядковані за класом, а system:index це видає.
+  // Перемішуємо і перебудовуємо Feature з нуля, щоб порядок і індекс не розкривали клас.
+  var shuffled = sampled.randomColumn("shuffle", 7 + yr).sort("shuffle");
+  var list = shuffled.toList(shuffled.size());
+  var pts = ee.FeatureCollection(
+    ee.List.sequence(0, list.size().subtract(1)).map(function (i) {
+      var f = ee.Feature(list.get(i));
       var c = f.geometry().coordinates();
-      return f.set({ lon: c.get(0), lat: c.get(1), ref: -1, year: yr });
-    });
+      return ee.Feature(f.geometry(), {
+        id: ee.Number(yr).multiply(10000).add(ee.Number(i).add(1)).toInt(),
+        year: yr,
+        lon: c.get(0),
+        lat: c.get(1),
+        ref: -1,
+        classification: f.get("classification"),
+      });
+    }),
+  );
 
-  allBlindPts.push(pts);
-  allKeyPts.push(pts);
+  allPts.push(pts);
 });
 
-var combinedBlind = ee.FeatureCollection(allBlindPts).flatten();
-var combinedKey = ee.FeatureCollection(allKeyPts).flatten();
+var combinedPts = ee.FeatureCollection(allPts).flatten();
 
+// selectors задають точний набір колонок, тож system:index і classification у сліпі файли не потрапляють
 Export.table.toDrive({
-  collection: combinedBlind.select(["year", "lon", "lat", "ref"]),
+  collection: combinedPts,
   description: "all_validation_points_blind",
   folder: "Master_Validation",
   fileFormat: "CSV",
+  selectors: ["id", "year", "lon", "lat", "ref"],
 });
 
 Export.table.toDrive({
-  collection: combinedBlind.select(["year", "ref"]),
+  collection: combinedPts,
   description: "all_validation_points_map",
   folder: "Master_Validation",
   fileFormat: "KML",
+  selectors: ["id", "year", "ref"],
 });
 
 Export.table.toDrive({
-  collection: combinedKey,
+  collection: combinedPts,
   description: "all_validation_points_key",
   folder: "Master_Validation",
   fileFormat: "CSV",
+  selectors: ["id", "year", "lon", "lat", "classification"],
 });
