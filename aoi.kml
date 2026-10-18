@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>AOI</name>
+    <Style id="aoi">
+      <LineStyle><color>ff0000ff</color><width>2</width></LineStyle>
+      <PolyStyle><fill>0</fill></PolyStyle>
+    </Style>
+    <Placemark>
+      <name>AOI</name>
+      <styleUrl>#aoi</styleUrl>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              33.25,46.7,0 33.49,46.7,0 33.49,46.88,0 33.25,46.88,0 33.25,46.7,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>
