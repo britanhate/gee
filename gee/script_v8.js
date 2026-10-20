@@ -52,13 +52,13 @@ var classNames = [
   "Shrub / Tree",
   "Bare / Sparse",
   "Built-up",
-  "Wetland / Pioneer"
+  "Wetland / Pioneer",
 ];
 
 var classificationVis = {
   min: 0,
   max: 6,
-  palette: ["0000FF", "FFFF00", "00FF00", "006400", "D2B48C", "FF0000", "00FFFF"]
+  palette: ["0000FF", "FFFF00", "00FF00", "006400", "D2B48C", "FF0000", "00FFFF"],
 };
 
 var waterThreshold = 0.6;
@@ -76,7 +76,7 @@ var SAR_ORBIT = 65;
 var BEFORE_WINDOW = ["2023-05-20", "2023-06-06"];
 var SAR_AFTER_WINDOWS = {
   full: ["2023-06-06", "2023-06-26"],
-  peak: ["2023-06-07", "2023-06-14"]
+  peak: ["2023-06-07", "2023-06-14"],
 };
 var HAND_MAX = 15;
 var SLOPE_MAX = 5;
@@ -93,8 +93,8 @@ var leftBank = ee.Geometry.Polygon([
     [33.31232177734298, 46.764619621678555],
     [33.247777099608605, 46.77402580421145],
     [33.22992431640548, 46.688368999996726],
-    [33.55402099609298, 46.685542832916866]
-  ]
+    [33.55402099609298, 46.685542832916866],
+  ],
 ]);
 
 var rightBank = ee.Geometry.Polygon([
@@ -105,16 +105,15 @@ var rightBank = ee.Geometry.Polygon([
     [33.30682861328048, 46.76838229180926],
     [33.382359619139855, 46.78154956754381],
     [33.453770751952355, 46.83042840539449],
-    [33.511448974608605, 46.840762468391965]
-  ]
+    [33.511448974608605, 46.840762468391965],
+  ],
 ]);
 
 Map.addLayer(leftBank, { color: "0b4a8b" }, "leftBank (окупований)", false);
 Map.addLayer(rightBank, { color: "ffc82d" }, "rightBank (деокупований)", false);
 
 // Контрольна площа полігонів (перевірка, що геометрії задані)
-print("Площа полігонів, км² (лівий / правий):",
-  leftBank.area(1).divide(1e6), rightBank.area(1).divide(1e6));
+print("Площа полігонів, км² (лівий / правий):", leftBank.area(1).divide(1e6), rightBank.area(1).divide(1e6));
 
 // ---------------------------------------------------------------
 // 2. ФУНКЦІЇ ПРЕПРОЦЕСИНГУ ТА ФОРМУВАННЯ ОЗНАК
@@ -160,7 +159,7 @@ function buildYearFeatures(year) {
       SWIR: summerComposite.select("B11"),
       RED: summerComposite.select("B4"),
       NIR: summerComposite.select("B8"),
-      BLUE: summerComposite.select("B2")
+      BLUE: summerComposite.select("B2"),
     })
     .rename("BSI_summer");
 
@@ -195,7 +194,7 @@ function buildYearFeatures(year) {
 
   return {
     features: features,
-    summerComposite: summerComposite
+    summerComposite: summerComposite,
   };
 }
 
@@ -311,14 +310,14 @@ function buildReliableTraining(baseClass, dwProb, features) {
     region: aoi,
     scale: 10,
     geometries: true,
-    seed: 42
+    seed: 42,
   });
 
   var trainingData = features.sampleRegions({
     collection: trainingPoints,
     properties: ["CLASS"],
     scale: 10,
-    geometries: true
+    geometries: true,
   });
 
   return { points: trainingPoints, trainingData: trainingData };
@@ -339,18 +338,18 @@ function areaByClass(classified, geometry, props) {
       geometry: geometry,
       crs: CRS,
       crsTransform: TRANSFORM,
-      maxPixels: 1e13
+      maxPixels: 1e13,
     });
   var groups = ee.FeatureCollection(
     ee.List(grouped.get("groups")).map(function (g) {
       return ee.Feature(null, g);
-    })
+    }),
   );
   return ee.FeatureCollection(
     CLASS_VALUES.map(function (c) {
       var area = ee.Number(groups.filter(ee.Filter.eq("cls", c)).aggregate_sum("sum"));
       return ee.Feature(null, props).set({ class: c, area_km2: area.divide(1e6) });
-    })
+    }),
   );
 }
 
@@ -363,7 +362,7 @@ function maskedAreaKm2(mask, geometry) {
       geometry: geometry,
       crs: CRS,
       crsTransform: TRANSFORM,
-      maxPixels: 1e13
+      maxPixels: 1e13,
     })
     .get("area");
   return ee.Number(ee.Algorithms.If(area, area, 0)).divide(1e6);
@@ -387,11 +386,11 @@ years.forEach(function (year) {
 
   var classifier = ee.Classifier.smileRandomForest({
     numberOfTrees: numberOfTrees,
-    seed: 42
+    seed: 42,
   }).train({
     features: trainSet,
     classProperty: "CLASS",
-    inputProperties: features.bandNames()
+    inputProperties: features.bandNames(),
   });
 
   var valMatrix = valSet.classify(classifier).errorMatrix("CLASS", "classification");
@@ -399,8 +398,8 @@ years.forEach(function (year) {
     ee.Feature(null, {
       year: year,
       overall_accuracy: valMatrix.accuracy(),
-      kappa: valMatrix.kappa()
-    })
+      kappa: valMatrix.kappa(),
+    }),
   );
 
   var classified = features.classify(classifier).clip(aoi);
@@ -418,7 +417,7 @@ years.forEach(function (year) {
     crs: CRS,
     crsTransform: TRANSFORM,
     maxPixels: 1e13,
-    formatOptions: { noData: NODATA_CLASS }
+    formatOptions: { noData: NODATA_CLASS },
   });
 });
 
@@ -426,14 +425,14 @@ Export.table.toDrive({
   collection: ee.FeatureCollection(metricsRows),
   description: "validation_accuracy_metrics",
   folder: "Master_Tables",
-  fileFormat: "CSV"
+  fileFormat: "CSV",
 });
 
 Export.table.toDrive({
   collection: ee.FeatureCollection(allAreaRows).flatten(),
   description: "all_area_by_class_2021_2025",
   folder: "Master_Tables",
-  fileFormat: "CSV"
+  fileFormat: "CSV",
 });
 
 // ---------------------------------------------------------------
@@ -449,7 +448,7 @@ function transitionTable(fromImg, toImg) {
     geometry: aoi,
     crs: CRS,
     crsTransform: TRANSFORM,
-    maxPixels: 1e13
+    maxPixels: 1e13,
   });
 
   var groups = ee.List(grouped.get("groups"));
@@ -470,7 +469,7 @@ var transitionPairs = [
   [2021, 2023],
   [2023, 2024],
   [2024, 2025],
-  [2021, 2025]
+  [2021, 2025],
 ];
 var allTransitionTables = [];
 
@@ -485,7 +484,7 @@ Export.table.toDrive({
   collection: ee.FeatureCollection(allTransitionTables).flatten(),
   description: "all_transitions_2021_2025",
   folder: "Master_Tables",
-  fileFormat: "CSV"
+  fileFormat: "CSV",
 });
 
 // ---------------------------------------------------------------
@@ -503,10 +502,12 @@ function s1VvComposite(window) {
     .filter(ee.Filter.eq("relativeOrbitNumber_start", SAR_ORBIT))
     .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
     .select("VV");
-  print("SAR, орбіта " + SAR_ORBIT + ", сцени " + window[0] + " … " + window[1] + ":",
+  print(
+    "SAR, орбіта " + SAR_ORBIT + ", сцени " + window[0] + " … " + window[1] + ":",
     col.aggregate_array("system:time_start").map(function (t) {
       return ee.Date(t).format("YYYY-MM-dd");
-    }));
+    }),
+  );
   return col.median().focal_median(50, "circle", "meters").clip(aoi);
 }
 
@@ -530,9 +531,9 @@ function otsuThresholdMasked(image, regionMask) {
         reducer: ee.Reducer.histogram(255, 0.1),
         geometry: aoi,
         scale: 20,
-        maxPixels: 1e10
+        maxPixels: 1e10,
       })
-      .get("VV")
+      .get("VV"),
   );
 
   var counts = ee.Array(histogram.get("histogram"));
@@ -565,7 +566,8 @@ var thresholdBefore = ee.Number(otsuThresholdMasked(vvBefore, floodable));
 var waterBefore = cleanSmallBlobs(vvBefore.lt(thresholdBefore).and(floodable), MIN_PX);
 
 // 0 — поза полігонами, 1 — лівий берег, 2 — правий берег
-var bankCode = ee.Image(0)
+var bankCode = ee
+  .Image(0)
   .paint(ee.FeatureCollection([ee.Feature(leftBank)]), 1)
   .paint(ee.FeatureCollection([ee.Feature(rightBank)]), 2)
   .rename("bank")
@@ -597,28 +599,35 @@ Object.keys(SAR_AFTER_WINDOWS).forEach(function (key) {
   print("Поріг Оцу до / після (" + key + "), дБ:", thresholdBefore, thresholdAfter);
 
   // Площі за класом і берегом, км²
-  var groups = ee.List(ee.Image.pixelArea().divide(1e6)
-    .addBands(floodClass.multiply(10).add(bankCode).rename("code"))
-    .reduceRegion({
-      reducer: ee.Reducer.sum().group({ groupField: 1, groupName: "code" }),
-      geometry: aoi,
-      crs: CRS,
-      crsTransform: TRANSFORM,
-      maxPixels: 1e13
-    })
-    .get("groups"));
-  sarRows.push(ee.FeatureCollection(groups.map(function (g) {
-    g = ee.Dictionary(g);
-    var code = ee.Number(g.get("code"));
-    return ee.Feature(null, {
-      orbit: SAR_ORBIT,
-      after_window: key,
-      hand_max: HAND_MAX,
-      cls: code.divide(10).floor().int(),
-      bank: code.mod(10).int(),
-      area_km2: g.get("sum")
-    });
-  })));
+  var groups = ee.List(
+    ee.Image.pixelArea()
+      .divide(1e6)
+      .addBands(floodClass.multiply(10).add(bankCode).rename("code"))
+      .reduceRegion({
+        reducer: ee.Reducer.sum().group({ groupField: 1, groupName: "code" }),
+        geometry: aoi,
+        crs: CRS,
+        crsTransform: TRANSFORM,
+        maxPixels: 1e13,
+      })
+      .get("groups"),
+  );
+  sarRows.push(
+    ee.FeatureCollection(
+      groups.map(function (g) {
+        g = ee.Dictionary(g);
+        var code = ee.Number(g.get("code"));
+        return ee.Feature(null, {
+          orbit: SAR_ORBIT,
+          after_window: key,
+          hand_max: HAND_MAX,
+          cls: code.divide(10).floor().int(),
+          bank: code.mod(10).int(),
+          area_km2: g.get("sum"),
+        });
+      }),
+    ),
+  );
 
   Export.image.toDrive({
     image: floodClass,
@@ -627,7 +636,7 @@ Object.keys(SAR_AFTER_WINDOWS).forEach(function (key) {
     region: aoi,
     crs: CRS,
     crsTransform: TRANSFORM,
-    maxPixels: 1e13
+    maxPixels: 1e13,
   });
 });
 
@@ -637,11 +646,20 @@ Export.table.toDrive({
   collection: ee.FeatureCollection(sarRows).flatten(),
   description: "sar_orbit" + SAR_ORBIT + "_areas",
   folder: "Master_Tables",
-  fileFormat: "CSV"
+  fileFormat: "CSV",
 });
 
-Map.addLayer(floodClassByWindow.full.selfMask(), { min: 1, max: 3, palette: ["1f5aa6", "e4572e", "7fc8e0"] }, "SAR класи води (орбіта 65, повне вікно)");
-Map.addLayer(floodClassByWindow.peak.selfMask(), { min: 1, max: 3, palette: ["1f5aa6", "e4572e", "7fc8e0"] }, "SAR класи води (орбіта 65, пікове вікно)", false);
+Map.addLayer(
+  floodClassByWindow.full.selfMask(),
+  { min: 1, max: 3, palette: ["1f5aa6", "e4572e", "7fc8e0"] },
+  "SAR класи води (орбіта 65, повне вікно)",
+);
+Map.addLayer(
+  floodClassByWindow.peak.selfMask(),
+  { min: 1, max: 3, palette: ["1f5aa6", "e4572e", "7fc8e0"] },
+  "SAR класи води (орбіта 65, пікове вікно)",
+  false,
+);
 
 // ---------------------------------------------------------------
 // 7. ЛІВИЙ/ПРАВИЙ БЕРІГ + ПОЖЕЖІ (MCD64A1, FIRMS, dNBR)
@@ -660,7 +678,7 @@ Export.table.toDrive({
   collection: ee.FeatureCollection(bankTables).flatten(),
   description: "area_by_bank_class_year",
   folder: "Master_Tables",
-  fileFormat: "CSV"
+  fileFormat: "CSV",
 });
 
 // --- dNBR: лише луки та чагарники/дерева в обидва роки (збір урожаю на ріллі виключено)
@@ -669,7 +687,13 @@ var VEGETATED_CLASSES = [2, 3];
 
 function vegetatedInBothYears(year1, year2) {
   function isVegetated(classified) {
-    return classified.remap(VEGETATED_CLASSES, VEGETATED_CLASSES.map(function () { return 1; }), 0);
+    return classified.remap(
+      VEGETATED_CLASSES,
+      VEGETATED_CLASSES.map(function () {
+        return 1;
+      }),
+      0,
+    );
   }
   return isVegetated(classifiedByYear[year1]).and(isVegetated(classifiedByYear[year2]));
 }
@@ -683,7 +707,7 @@ var burnPairs = [
   [2021, 2022],
   [2022, 2023],
   [2023, 2024],
-  [2024, 2025]
+  [2024, 2025],
 ];
 var burnRows = [];
 
@@ -697,8 +721,8 @@ burnPairs.forEach(function (pair) {
         from_year: pair[0],
         to_year: pair[1],
         bank: bankName,
-        burn_area_no_crops_km2: maskedAreaKm2(burnMask, banks[bankName])
-      })
+        burn_area_no_crops_km2: maskedAreaKm2(burnMask, banks[bankName]),
+      }),
     );
   });
 });
@@ -707,7 +731,7 @@ Export.table.toDrive({
   collection: ee.FeatureCollection(burnRows),
   description: "dnbr_burn_area_by_bank_v4",
   folder: "Master_Tables",
-  fileFormat: "CSV"
+  fileFormat: "CSV",
 });
 
 // --- [v8] FIRMS: ціла кількість детекцій (піксель-дні на сітці 1 км) і щільність на 100 км²
@@ -724,16 +748,18 @@ years.forEach(function (year) {
       reducer: ee.Reducer.sum().unweighted(),
       geometry: banks[bankName],
       scale: 1000,
-      maxPixels: 1e13
+      maxPixels: 1e13,
     });
     var count = ee.Number(ee.Algorithms.If(stat.get("fire_count"), stat.get("fire_count"), 0));
     var bankAreaKm2 = banks[bankName].area(1).divide(1e6);
-    firmsRows.push(ee.Feature(null, {
-      year: year,
-      bank: bankName,
-      firms_detections: count,
-      firms_per_100km2: count.divide(bankAreaKm2).multiply(100)
-    }));
+    firmsRows.push(
+      ee.Feature(null, {
+        year: year,
+        bank: bankName,
+        firms_detections: count,
+        firms_per_100km2: count.divide(bankAreaKm2).multiply(100),
+      }),
+    );
   });
 });
 
@@ -741,34 +767,43 @@ Export.table.toDrive({
   collection: ee.FeatureCollection(firmsRows),
   description: "firms_detections_by_bank",
   folder: "Master_Tables",
-  fileFormat: "CSV"
+  fileFormat: "CSV",
 });
 
 // --- [v8] Площа вигорання MODIS MCD64A1 (500 м) за берегами та класами земного покриву того ж року.
 // Мінімальна оцінка: дрібні пожежі продукт пропускає.
 var mcdRows = [];
 years.forEach(function (year) {
-  var burned = ee.ImageCollection("MODIS/061/MCD64A1")
+  var burned = ee
+    .ImageCollection("MODIS/061/MCD64A1")
     .filterDate(year + "-01-01", year + 1 + "-01-01")
     .select("BurnDate")
-    .map(function (i) { return i.gt(0); })
+    .map(function (i) {
+      return i.gt(0);
+    })
     .max()
     .unmask(0);
   Object.keys(banks).forEach(function (bankName) {
-    var groups = ee.Image.pixelArea().divide(1e6).updateMask(burned)
+    var groups = ee.Image.pixelArea()
+      .divide(1e6)
+      .updateMask(burned)
       .addBands(classifiedByYear[year].rename("cls"))
       .reduceRegion({
         reducer: ee.Reducer.sum().group({ groupField: 1, groupName: "cls" }),
         geometry: banks[bankName],
         crs: CRS,
         crsTransform: TRANSFORM,
-        maxPixels: 1e13
+        maxPixels: 1e13,
       })
       .get("groups");
-    mcdRows.push(ee.FeatureCollection(ee.List(groups).map(function (g) {
-      g = ee.Dictionary(g);
-      return ee.Feature(null, { year: year, bank: bankName, class: g.get("cls"), burned_km2: g.get("sum") });
-    })));
+    mcdRows.push(
+      ee.FeatureCollection(
+        ee.List(groups).map(function (g) {
+          g = ee.Dictionary(g);
+          return ee.Feature(null, { year: year, bank: bankName, class: g.get("cls"), burned_km2: g.get("sum") });
+        }),
+      ),
+    );
   });
 });
 
@@ -776,7 +811,7 @@ Export.table.toDrive({
   collection: ee.FeatureCollection(mcdRows).flatten(),
   description: "mcd64a1_burned_by_bank_class",
   folder: "Master_Tables",
-  fileFormat: "CSV"
+  fileFormat: "CSV",
 });
 
 // ---------------------------------------------------------------
@@ -798,7 +833,7 @@ if (EXPORT_VALIDATION_POINTS) {
       projection: GRID,
       seed: 42 + yr,
       geometries: true,
-      dropNulls: true
+      dropNulls: true,
     });
 
     // Перемішуємо й перебудовуємо Feature з нуля, щоб порядок і індекс не розкривали клас
@@ -814,9 +849,9 @@ if (EXPORT_VALIDATION_POINTS) {
           lon: c.get(0),
           lat: c.get(1),
           ref: -1,
-          classification: f.get("classification")
+          classification: f.get("classification"),
         });
-      })
+      }),
     );
     allPts.push(pts);
   });
@@ -828,7 +863,7 @@ if (EXPORT_VALIDATION_POINTS) {
     description: "all_validation_points_blind",
     folder: "Master_Validation",
     fileFormat: "CSV",
-    selectors: ["id", "year", "lon", "lat", "ref"]
+    selectors: ["id", "year", "lon", "lat", "ref"],
   });
 
   Export.table.toDrive({
@@ -836,7 +871,7 @@ if (EXPORT_VALIDATION_POINTS) {
     description: "all_validation_points_map",
     folder: "Master_Validation",
     fileFormat: "KML",
-    selectors: ["id", "year", "ref"]
+    selectors: ["id", "year", "ref"],
   });
 
   Export.table.toDrive({
@@ -844,6 +879,6 @@ if (EXPORT_VALIDATION_POINTS) {
     description: "all_validation_points_key",
     folder: "Master_Validation",
     fileFormat: "CSV",
-    selectors: ["id", "year", "lon", "lat", "classification"]
+    selectors: ["id", "year", "lon", "lat", "classification"],
   });
 }
